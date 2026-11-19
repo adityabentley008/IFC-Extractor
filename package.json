@@ -1,0 +1,38 @@
+{
+  "name": "ifc-to-otxml",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Bentley OpenTower IFC2X3 to OTXML converter",
+  "type": "commonjs",
+  "main": "dist/IfcToOtxml.js",
+  "types": "dist/IfcToOtxml.d.ts",
+  "bin": {
+    "ifc-to-otxml": "dist/ConvertIfc.js",
+    "ifc-to-common": "dist/ConvertIfcToCommonData.js"
+  },
+  "files": [
+    "dist",
+    "schema",
+    "README_IFC.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "convert": "npm run build && node dist/ConvertIfc.js",
+    "convert:common": "npm run build && node dist/ConvertIfcToCommonData.js",
+    "test": "tsc -p tsconfig.test.json && mocha \".test-build/test/**/*.test.js\"",
+    "test:schema": "tsc -p tsconfig.test.json && python test/otxml_schema_test.py"
+  },
+  "dependencies": {
+    "@itwin/core-geometry": "4.11.6",
+    "xml-js": "1.6.11"
+  },
+  "devDependencies": {
+    "@types/mocha": "5.2.7",
+    "@types/node": "10.17.60",
+    "mocha": "10.8.2",
+    "typescript": "4.9.5"
+  }
+}
