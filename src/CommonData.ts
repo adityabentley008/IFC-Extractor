@@ -1,5 +1,29 @@
 export type SourceAttributes = Record<string, string>;
 
+export type PropertyValue = string | number | boolean | null | PropertyValue[];
+export interface SourceProperty {
+    name: string;
+    type: string;
+    value?: PropertyValue;
+    unitRef?: string;
+    properties?: SourceProperty[];
+}
+export interface SourcePropertySet {
+    name: string;
+    properties: SourceProperty[];
+}
+export interface SourceProperties {
+    propertySets?: SourcePropertySet[];
+}
+export interface MemberGroup extends SourceProperties {
+    id: string;
+    type: string;
+    label: string;
+    members: string[];
+    memberGroups?: MemberGroup[];
+    sourceAttributes?: SourceAttributes;
+}
+
 export interface Location {
     latitudeDegrees: number;
     longitudeDegrees: number;
@@ -7,14 +31,16 @@ export interface Location {
     altitudeBasis?: string;
 }
 
-export interface ProjectData {
+export interface ProjectData extends SourceProperties {
+    memberGroups?: MemberGroup[];
     projectId: string;
     siteName?: string;
     location: Location;
     sourceAttributes?: SourceAttributes;
 }
 
-export interface TowerInformation {
+export interface TowerInformation extends SourceProperties {
+    memberGroups?: MemberGroup[];
     id: string;
     name: string;
     type: string;
@@ -46,12 +72,12 @@ export interface Node {
     sourceAttributes?: SourceAttributes;
 }
 
-export interface Member {
+export interface Member extends SourceProperties {
     id: string;
-    startNodeId: string;
-    endNodeId: string;
-    sectionId: string;
-    betaAngleDegrees: number;
+    startNodeId?: string;
+    endNodeId?: string;
+    sectionId?: string;
+    betaAngleDegrees?: number;
     label: string;
     tag?: string;
     materialId?: string;
@@ -60,6 +86,8 @@ export interface Member {
     endRelease?: string;
     sourceElementId?: string;
     sourceAttributes?: SourceAttributes;
+    memberGroups?: MemberGroup[];
+    extractionIssues?: string[];
 }
 
 export interface Section {
@@ -72,9 +100,9 @@ export interface Section {
 }
 
 export interface Leg { name: string; members: string[]; }
-export interface Segment { id: string; name: string; members: string[]; }
-export interface Face { id: string; name: string; segments: Segment[]; }
-export interface Panel {
+export interface Segment extends SourceProperties { id: string; name: string; members: string[]; memberGroups?: MemberGroup[]; }
+export interface Face extends SourceProperties { id: string; name: string; segments: Segment[]; memberGroups?: MemberGroup[]; }
+export interface Panel extends SourceProperties {
     id: string;
     label: string;
     height: number;
@@ -89,6 +117,8 @@ export interface Panel {
     weight: number;
     legs: Leg[];
     faces: Face[];
+    faceBracingPropertySets?: SourcePropertySet[];
+    memberGroups?: MemberGroup[];
     sourceAttributes?: { panel?: SourceAttributes; panelProperty?: SourceAttributes };
 }
 
@@ -100,7 +130,7 @@ export interface Material {
     properties: Array<{ name: string; description: string; value: string; unit: string }>;
 }
 export interface CommonData {
-    schemaVersion: "1.0-draft";
+    schemaVersion: "1.0-draft" | "1.1-draft";
     source: { format: string; fileName: string };
     units: {
         nodeCoordinates: Unit;

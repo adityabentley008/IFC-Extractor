@@ -11,34 +11,37 @@ required. The package produces OTXML; it does not create an iModel.
 ## IFC to common data X
 
 The IFC reader can also produce versioned common-data JSON directly, without
-generating or parsing OTXML. The independent OTXML generator can then consume
-that JSON. For the supplied incomplete OpenTower export:
+generating or parsing OTXML. For an incomplete OpenTower export:
 
 ```powershell
 Set-Location D:\projects\ifc-to-otxml
 npm run convert:common -- "C:\data\tower.ifc" "C:\data\tower.json" --allow-partial
-Set-Location D:\projects\otxml-generator
-npm run generate -- "C:\data\tower.json" "C:\data\tower.otxml" --connector
 ```
 
 Omit `--allow-partial` for complete exports. It permits only a smaller exported
 panel count, warns, and records the source count and partial-export status;
-missing panels are never synthesized. The generator requires Python with `lxml`
-for XSD validation. Output paths must not already exist.
+missing panels are never synthesized. Output paths must not already exist.
 
 The JSON contains project and tower metadata, panel/leg/face/segment hierarchy,
 members and their node/section/material references, optional section contours,
 and material properties. Material properties marked `assumed` are generic
 defaults, not verified engineering values. Material assignment provenance is
-also recorded per member. Source attributes retain selected OTXML-compatible
-metadata and numeric precision; they do not represent the complete IFC.
+also recorded per member. The extractor follows IFC nesting and aggregation
+from the site, tower and panels. Unfamiliar component labels are carried in
+`memberGroups`, including nested groups, and their member IDs reference the
+same top-level `members` collection as leg and face bracing. Named IFC property
+sets stay with their owning objects in `propertySets`, rather than requiring
+new JSON fields for every property. Members with missing or unsupported data
+retain their IDs, membership and available fields, with `extractionIssues`
+explaining any missing normalized data. This is not a full IFC archive:
+unrelated entities and unsupported relationship or geometry kinds are not
+reconstructed. Input is still Bentley iModel OpenTower IFC2X3.
 Existing `convert` and `convertIfcToOtxml` remain available.
 
 TypeScript API: `convertIfcToCommonData(ifcText, fileName, { allowPartial })`
 from the package root. It returns `{ data, warnings, counts }`. The
-`1.0-draft` model is in [CommonData.ts](./src/CommonData.ts); the independent
-generator has the same draft contract. The two copies must evolve together
-until the contract is extracted into a shared package.
+`1.1-draft` model is in [CommonData.ts](./src/CommonData.ts). The independent
+OTXML generator has not been updated to consume this version.
 
 ## Install, build, and test
 
@@ -51,7 +54,7 @@ npm test
 ```
 
 The package has its own manifest, lockfile, TypeScript configurations, dependencies,
-and 11 conversion tests. It can be copied out of the connector repository and
+and conversion tests. It can be copied out of the connector repository and
 built/tested independently. The compatible toolchain is pinned in the lockfile.
 The lockfile records this project's Bentley Azure npm mirror, so fresh installs
 require access and valid npm authentication to that mirror. If npm reports

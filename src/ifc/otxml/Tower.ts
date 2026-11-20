@@ -12,7 +12,7 @@ interface TowerData {
     beams: IfcEntity[];
 }
 
-export function readTower(model: IfcModel, allowPartial = false): TowerData {
+export function readTower(model: IfcModel, allowPartial = false, extract = false): TowerData {
     const towers = model.components("TowerInformation");
     if (towers.length !== 1) throw new Error("Expected exactly one OpenTower tower.");
     const tower = towers[0];
@@ -28,9 +28,9 @@ export function readTower(model: IfcModel, allowPartial = false): TowerData {
         (panels.length !== declaredPanels && !allowPartial)) {
         throw new Error(`Tower declares ${declaredPanels} panels but exports ${panels.length}. Use --allow-partial only to convert an incomplete export.`);
     }
-    validatePanels(model, tower, panels, declaredPanels);
+    validatePanels(model, tower, panels, declaredPanels, extract);
     const beams = model.entitiesOfType("IFCBEAM");
-    for (const beam of beams) {
+    if (!extract) for (const beam of beams) {
         if (!["Leg", "TowerMember"].includes(model.required(beam.id, "ComponentName")) ||
             model.ancestry(beam.id).filter((id) => panels.some((panel) => panel.id === id)).length !== 1) {
             throw new Error(`Unsupported or unparented beam #${beam.id}.`);
@@ -51,16 +51,16 @@ function validateProjectUnits(model: IfcModel): void {
     }
 }
 
-function validatePanels(model: IfcModel, tower: IfcEntity, panels: IfcEntity[], declaredPanels: number): void {
+function validatePanels(model: IfcModel, tower: IfcEntity, panels: IfcEntity[], declaredPanels: number, extract: boolean): void {
     const panelIds = new Set<number>();
     for (const [index, panel] of panels.entries()) {
         const id = finite(model.required(panel.id, "PanelID"), "PanelID");
         if (!Number.isInteger(id) || id < 1 || id > declaredPanels || panelIds.has(id) || !model.ancestry(panel.id).includes(tower.id)) {
             throw new Error(`Invalid panel ID or hierarchy at #${panel.id}.`);
         }
-        if (id !== index + 1) throw new Error("Exported panels must be consecutive starting at Panel 1; the connector reader renumbers panels.");
+        if (!extract && id !== index + 1) throw new Error("Exported panels must be consecutive starting at Panel 1; the connector reader renumbers panels.");
         panelIds.add(id);
-        for (const key of ["Plan Bracing of Panel", "Hip Bracing of Panel"]) {
+        if (!extract) for (const key of ["Plan Bracing of Panel", "Hip Bracing of Panel"]) {
             if (model.required(panel.id, key) !== "None") throw new Error(`Unsupported ${key} at #${panel.id}.`);
         }
     }

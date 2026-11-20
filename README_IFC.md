@@ -608,8 +608,9 @@ schema and existing iModel creation code are not modified.
 ### What this refactor preserves
 
 The public API, CLI options, supported components, defaults, validation rules,
-and existing iModel processing path are unchanged. The package has 11 engine
-tests; the consuming connector retains 2 separate reader-compatibility tests.
+and existing iModel processing path are unchanged for direct OTXML conversion.
+The [Common X extractor](./README.md#ifc-to-common-data-x) has a separate,
+versioned output contract for IFC member groups and properties.
 Both supplied IFC files were compared against
 captured pre-refactor results: their **XML bytes, warning messages/order, and
 counts are identical**.

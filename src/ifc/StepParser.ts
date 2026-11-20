@@ -72,7 +72,7 @@ export function finite(value: string, context: string): number {
     return Number(value);
 }
 
-export function parseIfcEntities(ifc: string): Map<number, IfcEntity> {
+export function parseIfcEntities(ifc: string, retainAll = false): Map<number, IfcEntity> {
     if (!/END-ISO-10303-21;\s*$/.test(ifc)) throw new Error("Incomplete IFC STEP document.");
     const entities = new Map<number, IfcEntity>();
     let schema = false;
@@ -97,7 +97,7 @@ export function parseIfcEntities(ifc: string): Map<number, IfcEntity> {
             continue;
         }
         if (match[2] === "IFCAPPLICATION" && match[3].includes("'iModel2IFC'")) exporter = true;
-        if (!retained.has(match[2])) continue;
+        if (!retainAll && !retained.has(match[2])) continue;
         const id = Number(match[1]);
         if (entities.has(id)) throw new Error(`Duplicate IFC entity #${id}.`);
         entities.set(id, { id, type: match[2], args: splitStep(match[3], ",") });

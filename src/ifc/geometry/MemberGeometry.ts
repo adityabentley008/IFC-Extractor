@@ -1,6 +1,7 @@
 import { Matrix3d, Point3d, Transform, Vector3d } from "@itwin/core-geometry";
 import { EntityGetter, IfcEntity } from "../IfcTypes";
 import { finite, references, splitStep, stepText } from "../StepParser";
+import { UnsupportedProfile } from "./UnsupportedProfile";
 
 export function inverseTransform(transform: Transform): Transform {
     const result = transform.inverse();
@@ -42,7 +43,7 @@ export function readMemberFaces(beam: IfcEntity, get: EntityGetter): Point3d[][]
     const readMappingTarget = (raw: string): Transform => {
         const target = get(references(raw)[0]);
         if (!["IFCCARTESIANTRANSFORMATIONOPERATOR3D", "IFCCARTESIANTRANSFORMATIONOPERATOR3DNONUNIFORM"].includes(target.type)) {
-            throw new Error(`Unsupported IFC mapping target #${target.id}.`);
+            throw new UnsupportedProfile(`Unsupported IFC mapping target #${target.id}.`);
         }
         const scale = (rawScale: string): number => {
             const value = finite(rawScale, "mapping scale");
@@ -70,7 +71,7 @@ export function readMemberFaces(beam: IfcEntity, get: EntityGetter): Point3d[][]
                 for (const ref of references(a[2])) collectFaces(ref, transform);
                 break;
             case "IFCSHAPEREPRESENTATION":
-                if (stepText(a[1]) !== "Body") throw new Error(`Unsupported representation #${id}; expected Body.`);
+                if (stepText(a[1]) !== "Body") throw new UnsupportedProfile(`Unsupported representation #${id}; expected Body.`);
                 for (const ref of references(a[3])) collectFaces(ref, transform);
                 break;
             case "IFCMAPPEDITEM": {
@@ -93,10 +94,11 @@ export function readMemberFaces(beam: IfcEntity, get: EntityGetter): Point3d[][]
                 break;
             }
             default:
-                throw new Error(`Unsupported section geometry ${entity.type} at #${id}; expected mapped faceted BREP.`);
+                throw new UnsupportedProfile(`Unsupported section geometry ${entity.type} at #${id}; expected mapped faceted BREP.`);
         }
         visiting.delete(id);
     };
+    if (!beam.args[6] || beam.args[6] === "$") throw new UnsupportedProfile(`Missing section representation on #${beam.id}.`);
     collectFaces(references(beam.args[6])[0], readLocalPlacement(beam.args[5]));
     return faces;
 }

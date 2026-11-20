@@ -15,6 +15,44 @@ function all(node: Element, name: string): Element[] {
 }
 
 describe("OpenTower IFC to OTXML", () => {
+    it("extracts unfamiliar nested groups and named properties without a component allowlist", () => {
+        const input = fixture();
+        const panel = /^#(\d+)=IFCBUILDINGSTOREY/m.exec(input)![1];
+        const beam = /^#(\d+)=IFCBEAM\('beam0false'/m.exec(input)![1];
+        const reparented = input.replace(new RegExp(`^(#\\d+=IFCRELNESTS\\('nest',\\$,\\$,\\$,)#\\d+,\\(#${beam}\\)`, "m"),
+            `$1#9001,(#${beam})`);
+        const extended = reparented.replace(/\r?\nENDSEC;\r?\nEND-ISO/, `
+#9000=IFCBUILDINGELEMENTPART('group',$,'Future Assembly',$,$,$,$,$);
+#9001=IFCCURTAINWALL('subgroup',$,'Auxiliary Bracing 7',$,$,$,$,$);
+#9002=IFCRELNESTS('nest',$,$,$,#${panel},(#9000));
+#9003=IFCRELAGGREGATES('aggregate',$,$,$,#9000,(#9001));
+#9004=IFCPROPERTYSINGLEVALUE('ComponentName',$,IFCLABEL('AuxiliaryBracing'),$);
+#9005=IFCPROPERTYLISTVALUE('Design Factors',$,(IFCREAL(1.25),IFCREAL(1.5)),$);
+#9006=IFCPROPERTYSET('props',$,'Unfamiliar Pset',$,(#9004,#9005));
+#9007=IFCRELDEFINESBYPROPERTIES('props',$,$,$,(#9001,#${panel}),#9006);
+ENDSEC;
+END-ISO`);
+        const { data } = convertIfcToCommonData(extended, "future.ifc");
+        const group = data.panels[0].memberGroups![0].memberGroups![0];
+        assert.equal(group.label, "Auxiliary Bracing 7");
+        assert.equal(group.type, "AuxiliaryBracing");
+        assert.deepEqual(group.members, [beam]);
+        const member = data.members.find((entry) => entry.id === beam)!;
+        assert(data.nodes.some((node) => node.id === member.startNodeId));
+        assert(data.sections.some((section) => section.id === member.sectionId));
+        assert.deepEqual(data.panels[0].propertySets?.find((set) => set.name === "Unfamiliar Pset")?.properties[1].value, [1.25, 1.5]);
+    });
+
+    it("keeps a member and its endpoint references when section geometry cannot be recovered", () => {
+        const { data, warnings } = convertIfcToCommonData(fixture("tapered"), "tapered.ifc");
+        const member = data.members.find((entry) => entry.extractionIssues?.some((issue) => /constant-section/.test(issue)))!;
+        assert(member);
+        assert.equal(member.sectionId, undefined);
+        assert(data.nodes.some((node) => node.id === member.startNodeId));
+        assert(data.nodes.some((node) => node.id === member.endNodeId));
+        assert(warnings.some((warning) => warning.includes("incomplete normalization")));
+    });
+
     it("extracts common data directly with hierarchy, materials and mesh contour", () => {
         const result = convertIfcToCommonData(fixture(), "sample.ifc");
         const data = result.data;

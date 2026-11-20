@@ -5,6 +5,7 @@ import { recoverProfile, spatialEndpoint } from "../geometry/ProfileRecovery";
 import { finite, stepText } from "../StepParser";
 import { element } from "./Xml";
 import { Section } from "../../CommonData";
+import { UnsupportedProfile } from "../geometry/UnsupportedProfile";
 
 export class Sections {
     public readonly data: Section[] = [];
@@ -33,7 +34,7 @@ export class Sections {
         if (previous) return previous;
         const generic = parametric && ["HollowCircleProfile", "LShapeProfile"].includes(name);
         const profiles = generic ? [] : this.definitions.filter((entity) => stepText(entity.args[2]) === name);
-        if (!generic && profiles.length !== 1) throw new Error(`Expected one supported IFC profile definition for ${name}.`);
+        if (!generic && profiles.length !== 1) throw new UnsupportedProfile(`Expected one supported IFC profile definition for ${name}.`);
         const shape: ProfileShape = generic
             ? name === "HollowCircleProfile" ? "HollowCircleProfile" : "LShapeProfile"
             : stepText(profiles[0].args[3]) === "[OpenTower].[HollowCircle]" ? "HollowCircleProfile" : "LShapeProfile";
@@ -42,7 +43,7 @@ export class Sections {
         ).sort((a, b) => a.id - b.id);
         const representative = parametric ? beam : candidates.find((candidate) => this.isVertical(candidate)) || candidates[0];
         if (!parametric && shape === "HollowCircleProfile" && !this.isVertical(representative)) {
-            throw new Error(`Section ${name} needs a vertical representative to recover the connector's hollow-circle wall thickness.`);
+            throw new UnsupportedProfile(`Section ${name} needs a vertical representative to recover the connector's hollow-circle wall thickness.`);
         }
         const recovered = recoverProfile(representative, this.model.getEntity,
             spatialEndpoint(this.model.required(representative.id, "StartPoint")),

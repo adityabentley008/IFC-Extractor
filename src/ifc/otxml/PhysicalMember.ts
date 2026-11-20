@@ -7,6 +7,7 @@ import { Nodes } from "./Nodes";
 import { Sections } from "./Sections";
 import { element } from "./Xml";
 import { Member } from "../../CommonData";
+import { UnsupportedProfile } from "../geometry/UnsupportedProfile";
 
 export class PhysicalMemberBuilder {
     public readonly nodes = new Nodes();
@@ -25,47 +26,84 @@ export class PhysicalMemberBuilder {
         return element("PhysicalMember", this.buildData(beam, panelId).sourceAttributes);
     }
 
-    public buildData(beam: IfcEntity, panelId: string): Member {
+    public buildData(beam: IfcEntity, panelId: string, extract = false): Member {
         if (this.consumed.has(beam.id)) throw new Error(`Beam #${beam.id} was emitted twice.`);
         this.consumed.add(beam.id);
         const sectionName = this.model.property(beam.id, "Section Name") || this.model.property(beam.id, "Section");
-        if (!sectionName) throw new Error(`Missing section on #${beam.id}.`);
+        const issues: string[] = [];
+        const required = (key: string) => {
+            const value = this.model.property(beam.id, key);
+            if (!value) {
+                if (!extract) return this.model.required(beam.id, key);
+                issues.push(`Missing ${key} on #${beam.id}.`);
+            }
+            return value || undefined;
+        };
         let material = this.model.property(beam.id, "Material Name");
         const materialAssignmentSource = material ? "exported" : "assumed";
         if (!material) {
             material = "Default Steel";
             this.missingMaterials++;
         }
-        const start = this.nodes.resolve(this.model.required(beam.id, "StartPoint"));
-        const end = this.nodes.resolve(this.model.required(beam.id, "EndPoint"));
-        if (start === end) throw new Error(`Zero-length member #${beam.id}.`);
-        const attributes: Properties = {
-            PanelPropertyID: panelId, ID: String(beam.id), StartNodeID: start, EndNodeID: end,
-            SectionID: this.sections.resolve(sectionName, beam), MaterialID: this.materials.resolve(material),
-            BetaAngle: this.model.required(beam.id, "BetaAngle"), Label: stepText(beam.args[2]),
-            SourceAppElementId: `IFC_${stepText(beam.args[0])}`,
-            StartRelease: this.model.required(beam.id, "StartRelease"), EndRelease: this.model.required(beam.id, "EndRelease"),
-        };
-        finite(attributes.BetaAngle, "BetaAngle");
-        if (!/^[01]{5,6}$/.test(attributes.StartRelease) || !/^[01]{5,6}$/.test(attributes.EndRelease)) {
-            throw new Error(`Unsupported member release on #${beam.id}.`);
+        const startPoint = required("StartPoint");
+        const endPoint = required("EndPoint");
+        const start = startPoint === undefined ? undefined : this.nodes.resolve(startPoint);
+        const end = endPoint === undefined ? undefined : this.nodes.resolve(endPoint);
+        if (start !== undefined && start === end) throw new Error(`Zero-length member #${beam.id}.`);
+        let sectionId: string | undefined;
+        const beta = required("BetaAngle");
+        if (!sectionName) {
+            if (!extract) throw new Error(`Missing section on #${beam.id}.`);
+            issues.push(`Missing section on #${beam.id}.`);
+        } else if (start && end && beta !== undefined) {
+            try {
+                sectionId = this.sections.resolve(sectionName, beam);
+            } catch (error) {
+                if (!extract || !(error instanceof UnsupportedProfile)) throw error;
+                issues.push(error.message);
+            }
+        } else {
+            issues.push(`Cannot recover section ${sectionName} without endpoints and beta angle.`);
         }
-        if (attributes.StartRelease.length !== 6 || attributes.EndRelease.length !== 6) this.shortReleases++;
+        const startRelease = required("StartRelease");
+        const endRelease = required("EndRelease");
+        for (const release of [startRelease, endRelease]) {
+            if (release !== undefined && !/^[01]{5,6}$/.test(release)) {
+                if (!extract) throw new Error(`Unsupported member release on #${beam.id}.`);
+                issues.push(`Unsupported member release on #${beam.id}.`);
+                break;
+            }
+        }
+        if (startRelease?.length === 5 || endRelease?.length === 5) this.shortReleases++;
+        const label = beam.args[2] && beam.args[2] !== "$" ? stepText(beam.args[2]) :
+            this.model.property(beam.id, "User Label") || this.model.property(beam.id, "ComponentName") || beam.type;
+        const attributes: Properties = {
+            ...(panelId ? { PanelPropertyID: panelId } : {}), ID: String(beam.id),
+            ...(start === undefined ? {} : { StartNodeID: start }),
+            ...(end === undefined ? {} : { EndNodeID: end }),
+            ...(sectionId === undefined ? {} : { SectionID: sectionId }),
+            MaterialID: this.materials.resolve(material),
+            ...(beta === undefined ? {} : { BetaAngle: beta }), Label: label,
+            SourceAppElementId: `IFC_${stepText(beam.args[0])}`,
+            ...(startRelease === undefined ? {} : { StartRelease: startRelease }),
+            ...(endRelease === undefined ? {} : { EndRelease: endRelease }),
+        };
         const memberTag = this.model.property(beam.id, "MemberTag");
         if (memberTag) attributes.MemberTag = memberTag;
         const result: Member = {
             id: attributes.ID, startNodeId: start, endNodeId: end, sectionId: attributes.SectionID,
             materialId: attributes.MaterialID, materialAssignmentSource,
-            betaAngleDegrees: finite(attributes.BetaAngle, "BetaAngle"), label: attributes.Label,
+            betaAngleDegrees: beta === undefined ? undefined : finite(beta, "BetaAngle"), label: attributes.Label,
             sourceElementId: attributes.SourceAppElementId, startRelease: attributes.StartRelease,
             endRelease: attributes.EndRelease, sourceAttributes: attributes,
         };
+        if (issues.length) result.extractionIssues = issues;
         if (memberTag) result.tag = memberTag;
         return result;
     }
 
-    public finish(): void {
-        if (this.consumed.size !== this.beams.length) throw new Error("Some IFC beams could not be represented in the supported OTXML hierarchy.");
+    public finish(requireAllBeams = true): void {
+        if (requireAllBeams && this.consumed.size !== this.beams.length) throw new Error("Some IFC beams could not be represented in the supported OTXML hierarchy.");
         if (this.missingMaterials) this.warnings.push(`${this.missingMaterials} members assigned 'Default Steel' because IFC has no material assignment.`);
         if (this.shortReleases) this.warnings.push(`${this.shortReleases} members have five-character releases; preserved unchanged, not padded.`);
     }

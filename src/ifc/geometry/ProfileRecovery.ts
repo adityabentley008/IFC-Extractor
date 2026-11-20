@@ -3,6 +3,7 @@ import { alignProfileVertices, inchesToMetres } from "./LegacyProfileMath";
 import { EntityGetter, IfcEntity, ProfileShape, Properties } from "../IfcTypes";
 import { finite } from "../StepParser";
 import { inverseTransform, readMemberFaces } from "./MemberGeometry";
+import { UnsupportedProfile } from "./UnsupportedProfile";
 
 const tolerance = 1e-8;
 
@@ -30,7 +31,7 @@ export function recoverProfile(beam: IfcEntity, get: EntityGetter, start: Point3
     const levels = localFaces.reduce<number[]>((values, face) => values.concat(face.map((p) => p.z)), []);
     const bottom = Math.min(...levels);
     const top = Math.max(...levels);
-    if (!Number.isFinite(bottom) || top - bottom < tolerance) throw new Error(`Missing extruded section geometry on #${beam.id}.`);
+    if (!Number.isFinite(bottom) || top - bottom < tolerance) throw new UnsupportedProfile(`Missing extruded section geometry on #${beam.id}.`);
     if (parametric) validateConstantSection(localFaces, bottom, top, beam.id);
     const capFaces = localFaces.filter((face) => face.every((p) => Math.abs(p.z - bottom) < tolerance));
     const loops = traceCapBoundaries(capFaces, beam.id);
@@ -53,7 +54,7 @@ function createParametricFrame(faces: Point3d[][], start: Point3d, end: Point3d,
         }
         if (capNormal) break;
     }
-    if (!capNormal || !origin) throw new Error(`Missing parametric member cap on #${beamId}.`);
+    if (!capNormal || !origin) throw new UnsupportedProfile(`Missing parametric member cap on #${beamId}.`);
     const x = capNormal.crossProduct(Vector3d.unitZ()).normalize() || Vector3d.unitX();
     return inverseTransform(Transform.createOriginAndMatrix(origin, Matrix3d.createColumns(x, capNormal.crossProduct(x), capNormal)));
 }
@@ -76,7 +77,7 @@ function validateConstantSection(faces: Point3d[][], bottom: number, top: number
         candidates.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < tolerance);
     if (lower.length + upper.length !== points.length ||
         lower.some((p) => !matches(p, upper)) || upper.some((p) => !matches(p, lower))) {
-        throw new Error(`Expected a straight constant-section parametric member on #${beamId}.`);
+        throw new UnsupportedProfile(`Expected a straight constant-section parametric member on #${beamId}.`);
     }
 }
 
@@ -116,7 +117,7 @@ function traceCapBoundaries(capFaces: Point3d[][], beamId: number): Point3d[][] 
         neighbors.get(b)!.add(a);
     }
     if (!neighbors.size || [...neighbors.values()].some((n) => n.size !== 2)) {
-        throw new Error(`Cannot recover closed section contours from IFC beam #${beamId}.`);
+        throw new UnsupportedProfile(`Cannot recover closed section contours from IFC beam #${beamId}.`);
     }
     const remaining = new Set(neighbors.keys());
     const loops: Point3d[][] = [];
