@@ -1,9 +1,9 @@
-import { CommonData, Face, Member, MemberGroup, Panel, ProjectData, SourceProperties, TowerInformation } from "./CommonData";
+import { CommonData, Face, Member, MemberGroup, Panel, Pole, ProjectData, SourceProperties, TowerInformation } from "./CommonData";
 import { IfcModel } from "./ifc/IfcModel";
 import { IfcEntity } from "./ifc/IfcTypes";
 import { finite, stepText } from "./ifc/StepParser";
 import { PhysicalMemberBuilder } from "./ifc/otxml/PhysicalMember";
-import { conversionWarnings, readTower } from "./ifc/otxml/Tower";
+import { conversionWarnings, readTower, validateProjectUnits } from "./ifc/otxml/Tower";
 
 export * from "./CommonData";
 
@@ -60,6 +60,13 @@ class PanelHierarchy {
         const code = textProperty("Code");
         const result: MemberGroup = { id: String(entity.id), type, label, members: [], ...source };
         if (code !== undefined) result.sourceAttributes = { Code: code };
+        if (type === "RadCenter") {
+            for (const [sourceKey, targetKey] of [["Elevation", "Elevation"], ["Operator", "Operator"],
+                ["SourceAppElement ID of RadCenter", "SourceAppElementId"]] as const) {
+                const value = textProperty(sourceKey);
+                if (value !== undefined) (result.sourceAttributes ??= {})[targetKey] = value;
+            }
+        }
         if (this.isMember(entity)) {
             result.members.push(this.addMember(entity, panelId));
             return result;
@@ -133,24 +140,90 @@ function panelData(model: IfcModel, hierarchy: PanelHierarchy, panel: IfcEntity,
     };
 }
 
-export function convertIfcToCommonData(ifc: string, fileName: string, options: { allowPartial?: boolean } = {}): IfcToCommonDataResult {
+function poleData(model: IfcModel, hierarchy: PanelHierarchy, builder: PhysicalMemberBuilder, entity: IfcEntity): Pole {
+    const id = model.required(entity.id, "Pole ID");
+    const pole: Pole = {
+        id,
+        label: model.property(entity.id, "User Label") || stepText(entity.args[2]),
+        sourceIfcId: String(entity.id),
+        parentIfcId: String(model.ancestry(entity.id)[1]),
+        sourceElementId: `IFC_${stepText(entity.args[0])}`,
+        members: [String(entity.id)],
+        ...propertySets(model, entity.id),
+    };
+    const numericProperties: Array<[string, keyof Pick<Pole, "sectionLength" | "topElevation" | "bottomElevation" |
+        "topFlatDiameter" | "bottomFlatDiameter" | "topTipDiameter" | "bottomTipDiameter" |
+        "thickness" | "topFlatWidth" | "bottomFlatWidth">]> = [
+        ["Length of the Section", "sectionLength"], ["Top Elevation of Pole", "topElevation"],
+        ["Bottom Elevation of Pole", "bottomElevation"], ["Top Flat Diameter of Pole", "topFlatDiameter"],
+        ["Bottom Flat Diameter of Pole", "bottomFlatDiameter"], ["Top Tip Diameter of Pole", "topTipDiameter"],
+        ["Bottom Tip Diameter of Pole", "bottomTipDiameter"], ["Thickness of Pole", "thickness"],
+        ["Top Flat Width of Pole", "topFlatWidth"], ["Bottom Flat Width of Pole", "bottomFlatWidth"],
+    ];
+    for (const [source, target] of numericProperties) {
+        const value = model.property(entity.id, source);
+        if (value !== undefined) pole[target] = finite(value, `Pole ${id}.${source}`);
+    }
+    pole.sectionType = model.property(entity.id, "Pole Section Type");
+    pole.sectionProfile = model.property(entity.id, "SectionProfile of Pole");
+    const member: Member = {
+        id: String(entity.id), sourceKind: "pole", label: pole.label, sourceElementId: pole.sourceElementId,
+    };
+    for (const [source, target] of [["StartPoint", "startNodeId"], ["EndPoint", "endNodeId"]] as const) {
+        const value = model.property(entity.id, source);
+        if (value) member[target] = builder.nodes.resolve(value);
+        else (member.extractionIssues ??= []).push(`Missing ${source} on IFC #${entity.id}.`);
+    }
+    if (member.startNodeId && member.startNodeId === member.endNodeId) throw new Error(`Zero-length pole #${entity.id}.`);
+    hierarchy.members.push(member);
+    hierarchy.nonPanelMemberCount++;
+    const groups = hierarchy.extraGroups(entity.id, "");
+    if (groups.length) pole.memberGroups = groups;
+    return pole;
+}
+
+export function convertIfcToCommonData(ifc: string, fileName: string, options: { allowPartial?: boolean; calculateSectionProfiles?: boolean } = {}): IfcToCommonDataResult {
     if (!fileName) throw new Error("An IFC source file name is required.");
     const model = new IfcModel(ifc, true);
-    const tower = readTower(model, options.allowPartial, true);
-    const warnings = conversionWarnings(tower);
+    const towers = model.components("TowerInformation");
+    if (towers.length !== 1) throw new Error("Expected exactly one OpenTower tower.");
+    const monopole = model.required(towers[0].id, "Tower Type").toLowerCase() === "monopole";
+    if (monopole) validateProjectUnits(model);
+    const tower = monopole ? {
+        entity: towers[0], convention: model.required(towers[0].id, "Tower Convention"),
+        declaredPanels: 0, panels: [] as IfcEntity[], beams: model.entitiesOfType("IFCBEAM"),
+    } : readTower(model, options.allowPartial, true);
+    const poles = monopole ? model.components("Pole") : [];
+    if (monopole && !poles.length) throw new Error("Monopole tower has no exported Pole components.");
+    const poleIds = new Set<string>();
+    for (const pole of poles) {
+        const id = model.required(pole.id, "Pole ID");
+        if (poleIds.has(id) || !model.ancestry(pole.id).includes(tower.entity.id)) {
+            throw new Error(`Duplicate pole ID or invalid pole hierarchy at #${pole.id}.`);
+        }
+        poleIds.add(id);
+    }
+    const warnings = monopole ? [
+        "Common X preserves tower and site components connected by IFC nesting or aggregation; only supported geometry is normalized.",
+        "Pole dimensions are exported source values; their units have not been independently established. Endpoint properties are Y-up metres and rounded by IFC export.",
+        "Pole members represent the source Pole objects and their endpoints; pole mesh geometry is not reconstructed as a section.",
+    ] : conversionWarnings(tower);
     warnings[0] = "Common X preserves tower and site components connected by IFC nesting or aggregation; only supported geometry is normalized.";
-    const builder = new PhysicalMemberBuilder(model, tower.convention, tower.beams, warnings);
+    if (!options.calculateSectionProfiles && !monopole) warnings.push("Section contour output is disabled; dimensions are still recovered from IFC mesh geometry. Use --calculateSectionProfiles to include contours.");
+    const builder = new PhysicalMemberBuilder(model, tower.convention, tower.beams, warnings, options.calculateSectionProfiles === true);
 
     const sites = model.entitiesOfType("IFCSITE");
     if (sites.length !== 1) throw new Error("Expected one IFC site with Site_Data geolocation.");
-    const hierarchy = new PanelHierarchy(model, builder, new Set([sites[0].id, tower.entity.id, ...tower.panels.map((panel) => panel.id)]));
+    const hierarchy = new PanelHierarchy(model, builder, new Set([sites[0].id, tower.entity.id,
+        ...tower.panels.map((panel) => panel.id), ...poles.map((pole) => pole.id)]));
     const panels = tower.panels.map((panel) => panelData(model, hierarchy, panel, tower.entity));
+    const poleValues = poles.map((pole) => poleData(model, hierarchy, builder, pole));
     const siteGroups = hierarchy.extraGroups(sites[0].id, "");
     const towerGroups = hierarchy.extraGroups(tower.entity.id, "");
     const { members } = hierarchy;
     builder.finish(false);
     const outsideScope = tower.beams.filter((beam) => !hierarchy.memberIds.has(beam.id));
-    if (outsideScope.length) warnings.push(`${outsideScope.length} IFC beams have no nesting or aggregation path to the exported site, tower or panels.`);
+    if (outsideScope.length) warnings.push(`${outsideScope.length} IFC beams have no nesting or aggregation path to the exported site, tower or ${monopole ? "poles" : "panels"}.`);
     const incomplete = members.filter((member) => member.extractionIssues?.length).length;
     if (incomplete) warnings.push(`${incomplete} members have incomplete normalization; see their extractionIssues. Membership and available properties were retained.`);
     const locationValue = (name: string) => finite(model.required(sites[0].id, name), name);
@@ -168,8 +241,9 @@ export function convertIfcToCommonData(ifc: string, fileName: string, options: {
     const information: TowerInformation = {
         ...propertySets(model, towerId), ...(towerGroups.length ? { memberGroups: towerGroups } : {}),
         id: towerText("Tower ID"), name: towerText("Tower Name"), type: towerText("Tower Type"),
-        height: towerNumber("Height of Tower"), numberOfLegs: towerNumber("No. of Legs"),
-        declaredPanelCount: tower.declaredPanels, bearingAngleDegrees: towerNumber("Bearing Angle/ North Orientation"),
+        height: towerNumber("Height of Tower"),
+        ...(!monopole ? { numberOfLegs: towerNumber("No. of Legs"), declaredPanelCount: tower.declaredPanels } : {}),
+        bearingAngleDegrees: towerNumber("Bearing Angle/ North Orientation"),
         topFaceWidth: towerNumber("Top Face Width (ft)"), topFaceDepth: towerNumber("Top Face Depth (ft)"),
         bottomFaceWidth: towerNumber("Bottom Face Width (ft)"), bottomFaceDepth: towerNumber("Bottom Face Depth (ft)"),
         convention: tower.convention, unitSystem: towerText("Unit System"), otxmlAngle: towerNumber("OTXMLAngle"),
@@ -185,19 +259,19 @@ export function convertIfcToCommonData(ifc: string, fileName: string, options: {
     }
     const towerShape = model.property(towerId, "TowerShape");
     if (towerShape !== undefined) information.towerShape = towerShape;
-    if (panels.length !== tower.declaredPanels) information.partialExport = true;
+    if (!monopole && panels.length !== tower.declaredPanels) information.partialExport = true;
     const data: CommonData = {
         schemaVersion: "1.1-draft",
         source: { format: "IFC", fileName },
         units: {
             nodeCoordinates: { unit: "m", basis: "OpenTower endpoint properties" },
-            panelDimensions: { unit: "ft", basis: "OpenTower panel properties" },
+            ...(!monopole ? { panelDimensions: { unit: "ft", basis: "OpenTower panel properties" },
+                panelWeight: { unit: "unknown" } } : { poleDimensions: { unit: "unknown", basis: "unconverted OpenTower pole properties" } }),
             towerDimensions: { unit: "ft", basis: "OpenTower tower properties" },
             sectionDimensions: { unit: "in", basis: "legacy connector profile convention" },
-            panelWeight: { unit: "unknown" },
         },
         coordinateSystem: { upAxis: "Y", basis: "OpenTower endpoint properties" },
-        projectData, towerInformation: information, panels, nodes: builder.nodes.data, members,
+        projectData, towerInformation: information, ...(monopole ? { poles: poleValues } : { panels }), nodes: builder.nodes.data, members,
         sections: builder.sections.data, materials: builder.materials.data,
         notes: [...warnings, "projectData.projectId and some source element identifiers are generated for connector compatibility; they are not original source IDs."],
     };

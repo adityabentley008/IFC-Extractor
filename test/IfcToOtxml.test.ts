@@ -14,7 +14,120 @@ function all(node: Element, name: string): Element[] {
     return found.concat(...(node.elements || []).map((child) => all(child, name)));
 }
 
+function monopoleFixture(): string {
+    const input = fixture("solid");
+    const tower = /^#(\d+)=IFCBUILDING\('tower'/m.exec(input)![1];
+    const panel = /^#(\d+)=IFCBUILDINGSTOREY\('panel'/m.exec(input)![1];
+    return input.replace("IFCTEXT('SelfSupported')", "IFCTEXT('Monopole')")
+        .replace(new RegExp(`^#\\d+=IFCRELNESTS\\('nest',\\$,\\$,\\$,#${tower},\\(#${panel}\\)\\);\\r?\\n`, "m"), "")
+        .replace(/\r?\nENDSEC;\r?\nEND-ISO/, `
+#9000=IFCBUILDINGELEMENTPART('base',$,'Base',$,$,$,$,$);
+#9001=IFCBUILDINGSTOREY('pole',$,'Pole 1',$,$,$,$,$,.ELEMENT.,$);
+#9002=IFCPROPERTYSINGLEVALUE('ComponentName',$,IFCTEXT('BaseStructure'),$);
+#9003=IFCPROPERTYSET('baseprops',$,'[OpenTower].[Base]',$,(#9002));
+#9004=IFCRELDEFINESBYPROPERTIES('props',$,$,$,(#9000),#9003);
+#9005=IFCPROPERTYSINGLEVALUE('ComponentName',$,IFCTEXT('Pole'),$);
+#9006=IFCPROPERTYSINGLEVALUE('Pole ID',$,IFCINTEGER(1),$);
+#9007=IFCPROPERTYSINGLEVALUE('User Label',$,IFCTEXT('Pole 1'),$);
+#9008=IFCPROPERTYSINGLEVALUE('StartPoint',$,IFCTEXT('0,30,0'),$);
+#9009=IFCPROPERTYSINGLEVALUE('EndPoint',$,IFCTEXT('0,0,0'),$);
+#9010=IFCPROPERTYSINGLEVALUE('Length of the Section',$,IFCREAL(98.68),$);
+#9011=IFCPROPERTYSINGLEVALUE('Thickness of Pole',$,IFCREAL(0.02),$);
+#9012=IFCPROPERTYSINGLEVALUE('SectionProfile of Pole',$,IFCTEXT('TT508'),$);
+#9013=IFCPROPERTYSET('poleprops',$,'[OpenTower].[Pole]',$,(#9005,#9006,#9007,#9008,#9009,#9010,#9011,#9012));
+#9014=IFCRELDEFINESBYPROPERTIES('props',$,$,$,(#9001),#9013);
+#9015=IFCRELNESTS('nest',$,$,$,#${tower},(#9000));
+#9016=IFCRELNESTS('nest',$,$,$,#9000,(#9001));
+#9017=IFCRELAGGREGATES('aggregate',$,$,$,#9000,(#9001));
+#9018=IFCBUILDINGELEMENTPART('mount',$,'Mount',$,$,$,$,$);
+#9019=IFCRELNESTS('nest',$,$,$,#9001,(#9018));
+#9020=IFCBUILDINGELEMENTPART('rad',$,'RadCenter',$,$,$,$,$);
+#9021=IFCPROPERTYSINGLEVALUE('ComponentName',$,IFCTEXT('RadCenter'),$);
+#9022=IFCPROPERTYSINGLEVALUE('Elevation',$,IFCTEXT('94.55'),$);
+#9023=IFCPROPERTYSINGLEVALUE('Operator',$,IFCTEXT('-'),$);
+#9024=IFCPROPERTYSET('radprops',$,'[OpenTower].[RadCenter]',$,(#9021,#9022,#9023));
+#9025=IFCRELDEFINESBYPROPERTIES('props',$,$,$,(#9020),#9024);
+#9026=IFCRELNESTS('nest',$,$,$,#${tower},(#9020));
+ENDSEC;
+END-ISO`);
+}
+
 describe("OpenTower IFC to OTXML", () => {
+    it("extracts pole members and endpoints without inventing sections or panels", () => {
+        const { data } = convertIfcToCommonData(monopoleFixture(), "pole.ifc");
+        assert.equal(data.towerInformation.type, "Monopole");
+        assert.equal(data.panels, undefined);
+        assert.equal(data.towerInformation.declaredPanelCount, undefined);
+        assert.equal(data.towerInformation.numberOfLegs, undefined);
+        assert.equal(data.poles!.length, 1);
+        const pole = data.poles![0];
+        assert.equal(pole.id, "1");
+        assert.equal(pole.sourceIfcId, "9001");
+        assert.equal(pole.parentIfcId, "9000");
+        assert.equal(pole.sectionLength, 98.68);
+        assert.equal(pole.thickness, 0.02);
+        assert.equal(pole.sectionProfile, "TT508");
+        assert.deepEqual(pole.members, ["9001"]);
+        const member = data.members.find((entry) => entry.id === pole.members[0])!;
+        assert.equal(member.sourceKind, "pole");
+        assert.equal(member.sectionId, undefined);
+        assert.equal(member.betaAngleDegrees, undefined);
+        assert.equal(member.materialId, undefined);
+        assert.deepEqual(data.nodes.find((node) => node.id === member.startNodeId), { id: member.startNodeId, x: 0, y: 30, z: 0 });
+        assert.deepEqual(data.nodes.find((node) => node.id === member.endNodeId), { id: member.endNodeId, x: 0, y: 0, z: 0 });
+        assert.equal(pole.memberGroups![0].label, "Mount");
+        assert.equal(data.towerInformation.memberGroups![0].id, pole.parentIfcId);
+        assert.equal(data.members.length, 1);
+        assert.deepEqual(data.sections, []);
+        assert.equal(data.units.poleDimensions!.unit, "unknown");
+    });
+
+    it("handles multiple poles, incomplete endpoints, and invalid pole hierarchies", () => {
+        const input = monopoleFixture();
+        const second = input.replace(/\r?\nENDSEC;\r?\nEND-ISO/, `
+#9100=IFCBUILDINGSTOREY('pole2',$,'Pole 2',$,$,$,$,$,.ELEMENT.,$);
+#9101=IFCPROPERTYSINGLEVALUE('Pole ID',$,IFCINTEGER(2),$);
+#9102=IFCPROPERTYSET('pole2props',$,'[OpenTower].[Pole]',$,(#9005,#9101,#9009));
+#9103=IFCRELDEFINESBYPROPERTIES('props',$,$,$,(#9100),#9102);
+#9104=IFCRELNESTS('nest',$,$,$,#9000,(#9100));
+ENDSEC;
+END-ISO`);
+        const result = convertIfcToCommonData(second, "poles.ifc");
+        const pole = result.data.poles!.find((item) => item.id === "2")!;
+        assert.equal(result.data.poles!.length, 2);
+        const member = result.data.members.find((item) => item.id === pole.members[0])!;
+        const first = result.data.members.find((item) => item.id === result.data.poles![0].members[0])!;
+        assert.equal(member.endNodeId, first.endNodeId);
+        assert(member.extractionIssues!.some((issue) => issue.includes("StartPoint")));
+        assert(result.warnings.some((warning) => warning.includes("incomplete normalization")));
+        assert.throws(() => convertIfcToCommonData(second.replace("IFCINTEGER(2)", "IFCINTEGER(1)"), "duplicate.ifc"), /Duplicate pole ID/);
+        assert.throws(() => convertIfcToCommonData(input.replace("#9000,(#9001));", "#9018,(#9001));"), "cycle.ifc"), /Cyclic IFC nesting|invalid pole hierarchy/i);
+        assert.throws(() => convertIfcToCommonData(input.replace("IFCREAL(0.02)", "IFCTEXT('bad')"), "bad.ifc"), /Thickness of Pole/);
+    });
+
+    it("keeps normalized pole data when compact is combined with the other CLI flags", () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ifc-pole-"));
+        const input = path.join(directory, "input.ifc");
+        const output = path.join(directory, "output.json");
+        try {
+            fs.writeFileSync(input, monopoleFixture());
+            convertIfcToCommonDataFiles([input, output, "--compact", "--allowPartial", "--calculateSectionProfiles"]);
+            const data = JSON.parse(fs.readFileSync(output, "utf8"));
+            assert.equal(data.poles[0].sectionLength, 98.68);
+            assert.equal(data.poles[0].propertySets, undefined);
+            assert.equal(data.panels, undefined);
+            const member = data.members.find((item: { id: string }) => item.id === data.poles[0].members[0]);
+            assert(data.nodes.some((node: { id: string }) => node.id === member.startNodeId));
+            const rad = data.towerInformation.memberGroups.find((group: { type: string }) => group.type === "RadCenter");
+            assert.equal(rad.sourceAttributes.Elevation, "94.55");
+            assert.equal(rad.sourceAttributes.Operator, "-");
+            assert.equal(rad.propertySets, undefined);
+        } finally {
+            for (const file of [input, output]) if (fs.existsSync(file)) fs.unlinkSync(file);
+            fs.rmdirSync(directory);
+        }
+    });
+
     it("extracts unfamiliar nested groups and named properties without a component allowlist", () => {
         const input = fixture();
         const panel = /^#(\d+)=IFCBUILDINGSTOREY/m.exec(input)![1];
@@ -33,14 +146,14 @@ describe("OpenTower IFC to OTXML", () => {
 ENDSEC;
 END-ISO`);
         const { data } = convertIfcToCommonData(extended, "future.ifc");
-        const group = data.panels[0].memberGroups![0].memberGroups![0];
+        const group = data.panels![0].memberGroups![0].memberGroups![0];
         assert.equal(group.label, "Auxiliary Bracing 7");
         assert.equal(group.type, "AuxiliaryBracing");
         assert.deepEqual(group.members, [beam]);
         const member = data.members.find((entry) => entry.id === beam)!;
         assert(data.nodes.some((node) => node.id === member.startNodeId));
         assert(data.sections.some((section) => section.id === member.sectionId));
-        assert.deepEqual(data.panels[0].propertySets?.find((set) => set.name === "Unfamiliar Pset")?.properties[1].value, [1.25, 1.5]);
+        assert.deepEqual(data.panels![0].propertySets?.find((set) => set.name === "Unfamiliar Pset")?.properties[1].value, [1.25, 1.5]);
     });
 
     it("keeps a member and its endpoint references when section geometry cannot be recovered", () => {
@@ -54,12 +167,12 @@ END-ISO`);
     });
 
     it("extracts common data directly with hierarchy, materials and mesh contour", () => {
-        const result = convertIfcToCommonData(fixture(), "sample.ifc");
+        const result = convertIfcToCommonData(fixture(), "sample.ifc", { calculateSectionProfiles: true });
         const data = result.data;
         assert.deepEqual(result.counts, { panels: 1, legs: 3, bracingMembers: 3, nodes: 6 });
         assert.equal(data.source.format, "IFC");
-        assert.equal(data.panels[0].legs.length, 3);
-        assert.equal(data.panels[0].faces.length, 3);
+        assert.equal(data.panels![0].legs.length, 3);
+        assert.equal(data.panels![0].faces.length, 3);
         assert.equal(data.members.length, 6);
         assert.equal(data.sections[0].contour!.length, 6);
         assert.equal(data.materials[0].propertiesSource, "assumed");
@@ -75,7 +188,7 @@ END-ISO`);
         const result = convertIfcToCommonData(input, "partial.ifc", { allowPartial: true });
         assert.equal(result.data.towerInformation.declaredPanelCount, 46);
         assert.equal(result.data.towerInformation.partialExport, true);
-        assert.equal(result.data.panels.length, 1);
+        assert.equal(result.data.panels!.length, 1);
         assert.equal(result.data.sections[0].contour, undefined);
         const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ifc-common-"));
         const ifc = path.join(directory, "partial.ifc");
@@ -87,6 +200,74 @@ END-ISO`);
             assert.throws(() => convertIfcToCommonDataFiles([ifc, output, "--allow-partial"]), /EEXIST/);
         } finally {
             for (const file of [ifc, output]) if (fs.existsSync(file)) fs.unlinkSync(file);
+            fs.rmdirSync(directory);
+        }
+    });
+
+    it("includes section contours only when requested, preserving dimensions and member references", () => {
+        const ifc = fixture();
+        const normal = convertIfcToCommonData(ifc, "sample.ifc");
+        const calculated = convertIfcToCommonData(ifc, "sample.ifc", { calculateSectionProfiles: true });
+        assert(normal.data.sections.length > 0);
+        assert(normal.data.sections.every((section) => section.contour === undefined));
+        assert(calculated.data.sections.some((section) => section.contour && section.contour.length === 6));
+        assert.deepEqual(normal.data.sections, calculated.data.sections.map(({ contour, ...section }) => section));
+        assert.deepEqual(normal.data.members, calculated.data.members);
+        assert.deepEqual(normal.data.nodes, calculated.data.nodes);
+        assert(normal.warnings.some((warning) => warning.includes("contour output is disabled")));
+        assert(!normal.warnings.some((warning) => warning.includes("outer contour vertices")));
+        assert(calculated.warnings.some((warning) => warning.includes("outer contour vertices")));
+    });
+
+    it("combines profile calculation with partial and compact CLI options in either order", () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ifc-profiles-"));
+        const input = path.join(directory, "input.ifc");
+        const first = path.join(directory, "first.json");
+        const second = path.join(directory, "second.json");
+        try {
+            fs.writeFileSync(input, fixture().replace(/('No\. of Panels',\$,IFCTEXT\()'1'/, "$1'46'"));
+            assert.throws(() => convertIfcToCommonDataFiles([input, first, "--calculateSectionProfiles"]), /declares 46 panels/);
+            convertIfcToCommonDataFiles([input, first, "--allowPartial", "--calculateSectionProfiles", "--compact"]);
+            convertIfcToCommonDataFiles([input, second, "--compact", "--calculateSectionProfiles", "--allow-partial"]);
+            const data = JSON.parse(fs.readFileSync(first, "utf8"));
+            assert.deepEqual(data, JSON.parse(fs.readFileSync(second, "utf8")));
+            assert.equal(data.towerInformation.partialExport, true);
+            assert(data.sections.some((section: { contour?: unknown[] }) => section.contour?.length === 6));
+            assert.equal(data.projectData.propertySets, undefined);
+            assert.throws(() => convertIfcToCommonDataFiles([input, first, "--allowPartial", "--allow-partial"]), /Usage/);
+            assert.throws(() => convertIfcToCommonDataFiles([input, first, "--calculateSectionProfiles", "--calculateSectionProfiles"]), /Usage/);
+        } finally {
+            for (const file of [input, first, second]) if (fs.existsSync(file)) fs.unlinkSync(file);
+            fs.rmdirSync(directory);
+        }
+    });
+
+    it("omits property sets throughout compact JSON without changing other data", () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ifc-compact-"));
+        const input = path.join(directory, "input.ifc");
+        const normal = path.join(directory, "normal.json");
+        const compact = path.join(directory, "compact.json");
+        const compactReversed = path.join(directory, "compact-reversed.json");
+        try {
+            fs.writeFileSync(input, fixture("solid").replace(/('No\. of Panels',\$,IFCTEXT\()'1'/, "$1'46'"));
+            convertIfcToCommonDataFiles([input, normal, "--allow-partial"]);
+            convertIfcToCommonDataFiles([input, compact, "--compact", "--allow-partial"]);
+            convertIfcToCommonDataFiles([input, compactReversed, "--allow-partial", "--compact"]);
+            const full = fs.readFileSync(normal, "utf8");
+            const parsed = JSON.parse(full);
+            assert(parsed.projectData.propertySets.length);
+            assert(parsed.panels[0].faceBracingPropertySets.length);
+            assert(parsed.panels[0].faces[0].segments[0].propertySets.length);
+            const expected = JSON.parse(JSON.stringify(parsed, (key, value: unknown) =>
+                key === "propertySets" || key === "faceBracingPropertySets" ? undefined : value));
+            assert.deepEqual(JSON.parse(fs.readFileSync(compact, "utf8")), expected);
+            assert.deepEqual(JSON.parse(fs.readFileSync(compactReversed, "utf8")), expected);
+            assert.throws(() => convertIfcToCommonDataFiles([input, compact, "--compact", "--allow-partial"]), /EEXIST/);
+            assert.throws(() => convertIfcToCommonDataFiles([input, compact, "--compact", "--compact"]), /Usage/);
+            assert.throws(() => convertIfcToCommonDataFiles([input, compact, "--unknown"]), /Usage/);
+            assert.throws(() => convertIfcToCommonDataFiles([input, compact, "--compact", "--unknown"]), /Usage/);
+        } finally {
+            for (const file of [input, normal, compact, compactReversed]) if (fs.existsSync(file)) fs.unlinkSync(file);
             fs.rmdirSync(directory);
         }
     });

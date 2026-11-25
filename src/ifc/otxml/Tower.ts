@@ -39,7 +39,7 @@ export function readTower(model: IfcModel, allowPartial = false, extract = false
     return { entity: tower, convention, declaredPanels, panels, beams };
 }
 
-function validateProjectUnits(model: IfcModel): void {
+export function validateProjectUnits(model: IfcModel): void {
     const projects = model.entitiesOfType("IFCPROJECT");
     if (projects.length !== 1) throw new Error("Expected one IFC project.");
     const units = model.getEntity(references(projects[0].args[8])[0], "IFCUNITASSIGNMENT");

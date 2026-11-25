@@ -20,8 +20,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "convert": "npm run build && node dist/ConvertIfc.js",
-    "convert:common": "npm run build && node dist/ConvertIfcToCommonData.js",
+    "extract": "npm run build && node dist/ConvertIfcToCommonData.js",
+    "convert:otxml": "npm run build && node dist/ConvertIfc.js",
     "test": "tsc -p tsconfig.test.json && mocha \".test-build/test/**/*.test.js\"",
     "test:schema": "tsc -p tsconfig.test.json && python test/otxml_schema_test.py"
   },

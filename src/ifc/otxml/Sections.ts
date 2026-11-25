@@ -23,7 +23,8 @@ export class Sections {
     }
 
     constructor(private readonly model: IfcModel, private readonly convention: string,
-        private readonly beams: IfcEntity[], private readonly warnings: string[]) {
+        private readonly beams: IfcEntity[], private readonly warnings: string[],
+        private readonly includeContours = true) {
         this.definitions = model.entitiesOfType("IFCBUILDINGELEMENTPROXY").filter((entity) => entity.args[3]?.startsWith("'") &&
             ["[OpenTower].[HollowCircle]", "[OpenTower].[LShape]"].includes(stepText(entity.args[3])));
     }
@@ -70,10 +71,12 @@ export class Sections {
         const dimensions: Record<string, number> = {};
         for (const [dimension, value] of Object.entries(recovered.dimensions)) dimensions[dimension] = finite(value, `${sectionName}.${dimension}`);
         const section: Section = { id, shape, name: sectionName, dimensions, sourceAttributes };
-        if (recovered.contour.length) section.contour = recovered.contour.map((point) =>
+        if (this.includeContours && recovered.contour.length) section.contour = recovered.contour.map((point) =>
             ({ polygonId: "1", x: point.x, y: 0, z: point.z }));
         this.data.push(section);
-        this.warnings.push(`Recovered ${sectionName} from IFC beam #${representative.id}: ${parametric ? "parametric dimensions" : `${recovered.contour.length} outer contour vertices`}.`);
+        const detail = parametric ? "parametric dimensions" : this.includeContours
+            ? `${recovered.contour.length} outer contour vertices` : "dimensions from IFC mesh; contour output disabled";
+        this.warnings.push(`Recovered ${sectionName} from IFC beam #${representative.id}: ${detail}.`);
         this.ids.set(key, id);
         return id;
     }

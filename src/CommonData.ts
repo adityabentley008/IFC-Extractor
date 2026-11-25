@@ -45,8 +45,8 @@ export interface TowerInformation extends SourceProperties {
     name: string;
     type: string;
     height: number;
-    numberOfLegs: number;
-    declaredPanelCount: number;
+    numberOfLegs?: number;
+    declaredPanelCount?: number;
     bearingAngleDegrees: number;
     topFaceWidth: number;
     topFaceDepth: number;
@@ -74,6 +74,7 @@ export interface Node {
 
 export interface Member extends SourceProperties {
     id: string;
+    sourceKind?: "pole";
     startNodeId?: string;
     endNodeId?: string;
     sectionId?: string;
@@ -122,6 +123,29 @@ export interface Panel extends SourceProperties {
     sourceAttributes?: { panel?: SourceAttributes; panelProperty?: SourceAttributes };
 }
 
+export interface Pole extends SourceProperties {
+    id: string;
+    label: string;
+    sourceIfcId: string;
+    parentIfcId: string;
+    sourceElementId: string;
+    members: string[];
+    sectionLength?: number;
+    topElevation?: number;
+    bottomElevation?: number;
+    topFlatDiameter?: number;
+    bottomFlatDiameter?: number;
+    topTipDiameter?: number;
+    bottomTipDiameter?: number;
+    thickness?: number;
+    sectionType?: string;
+    topFlatWidth?: number;
+    bottomFlatWidth?: number;
+    sectionProfile?: string;
+    memberGroups?: MemberGroup[];
+    extractionIssues?: string[];
+}
+
 export interface Unit { unit: string; basis?: string; }
 export interface Material {
     id: string;
@@ -134,15 +158,17 @@ export interface CommonData {
     source: { format: string; fileName: string };
     units: {
         nodeCoordinates: Unit;
-        panelDimensions: Unit;
+        panelDimensions?: Unit;
         towerDimensions: Unit;
         sectionDimensions: Unit;
-        panelWeight: Unit;
+        panelWeight?: Unit;
+        poleDimensions?: Unit;
     };
     coordinateSystem: { upAxis: "Y"; basis?: string };
     projectData: ProjectData;
     towerInformation: TowerInformation;
-    panels: Panel[];
+    panels?: Panel[];
+    poles?: Pole[];
     nodes: Node[];
     members: Member[];
     sections: Section[];

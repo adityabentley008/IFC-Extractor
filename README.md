@@ -3,6 +3,8 @@
 Standalone TypeScript package for reconstructing SST tower-panel OTXML from
 Bentley iModel OpenTower IFC2X3 exports. Supports `MS TOWER` and `OpenTower`
 conventions for `SelfSupported` towers.
+Common-data extraction also supports OpenTower monopole exports with explicit
+`Pole` components; direct OTXML conversion remains SST-only.
 
 **The IFC is the only input file.** No original OTXML, section catalog, EC schema,
 iModel credentials, connector installation, or connector source imports are
@@ -15,12 +17,38 @@ generating or parsing OTXML. For an incomplete OpenTower export:
 
 ```powershell
 Set-Location D:\projects\ifc-to-otxml
-npm run convert:common -- "C:\data\tower.ifc" "C:\data\tower.json" --allow-partial
+npm run extract -- "C:\data\tower.ifc" "C:\data\tower.json" --allow-partial
+# Omit property sets from the generated JSON:
+npm run extract -- "C:\data\tower.ifc" "C:\data\tower-compact.json" --compact
+# Include calculated section contour coordinates for an incomplete export:
+npm run extract -- "C:\data\tower.ifc" "C:\data\tower-profiles.json" --allowPartial --calculateSectionProfiles
 ```
 
 Omit `--allow-partial` for complete exports. It permits only a smaller exported
 panel count, warns, and records the source count and partial-export status;
 missing panels are never synthesized. Output paths must not already exist.
+`--allowPartial` is an alias for `--allow-partial`. Add
+`--calculateSectionProfiles` to include calculated section contour coordinates
+and vertex-count notes. Without it, section dimensions and IDs are still
+recovered from IFC mesh geometry, but contours are omitted. Contours may still
+be calculated internally to derive the dimensions. OpenTower parametric profiles
+do not emit contours even when the flag is enabled.
+`--compact` removes every `propertySets` and `faceBracingPropertySets` field
+from the JSON, including nested groups, while preserving all other data. It can
+be combined with `--allow-partial` in either order. The omitted IFC properties
+cannot be recovered from the compact JSON; leave the flag out when they are needed.
+
+For a monopole, Common X contains `poles` instead of `panels`. Each pole keeps
+its source IFC and parent IDs, source pole properties, and references to the
+shared `members` array. Each pole member represents the source Pole object,
+not a separate IFC beam, and refers to the shared endpoint nodes; no section,
+material, or beta angle is invented. Pole dimensions are unconverted source
+values with units marked unknown; confirm their units before using them. Missing
+endpoints are reported in the member's `extractionIssues`. Other nested components, including rad
+centers and any mounts or antennas present, follow the existing generic
+`memberGroups` behavior; they are not separately normalized as monopole
+equipment. The supplied monopole sample has no separate IFC physical beams.
+`--allow-partial` applies to SST panel counts, not monopole pole counts.
 
 The JSON contains project and tower metadata, panel/leg/face/segment hierarchy,
 members and their node/section/material references, optional section contours,
@@ -36,12 +64,12 @@ retain their IDs, membership and available fields, with `extractionIssues`
 explaining any missing normalized data. This is not a full IFC archive:
 unrelated entities and unsupported relationship or geometry kinds are not
 reconstructed. Input is still Bentley iModel OpenTower IFC2X3.
-Existing `convert` and `convertIfcToOtxml` remain available.
+Direct OTXML conversion remains available through `convert:otxml` and `convertIfcToOtxml`.
 
-TypeScript API: `convertIfcToCommonData(ifcText, fileName, { allowPartial })`
+TypeScript API: `convertIfcToCommonData(ifcText, fileName, { allowPartial, calculateSectionProfiles })`
 from the package root. It returns `{ data, warnings, counts }`. The
 `1.1-draft` model is in [CommonData.ts](./src/CommonData.ts). The independent
-OTXML generator has not been updated to consume this version.
+OTXML generator supports SST and monopole generation with separate schemas.
 
 ## Install, build, and test
 
@@ -65,9 +93,9 @@ This package does not change machine-level npm configuration.
 ## Convert
 
 ```powershell
-npm run convert -- "C:\data\tower.ifc" "C:\data\recovered.otxml"
+npm run convert:otxml -- "C:\data\tower.ifc" "C:\data\recovered.otxml"
 # Explicitly allow a known incomplete export:
-npm run convert -- "C:\data\partial.ifc" "C:\data\partial.otxml" --allow-partial
+npm run convert:otxml -- "C:\data\partial.ifc" "C:\data\partial.otxml" --allow-partial
 ```
 
 After building, conversion can run without rebuilding:

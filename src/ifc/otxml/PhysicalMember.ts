@@ -18,8 +18,8 @@ export class PhysicalMemberBuilder {
     private shortReleases = 0;
 
     constructor(private readonly model: IfcModel, convention: string,
-        private readonly beams: IfcEntity[], private readonly warnings: string[]) {
-        this.sections = new Sections(model, convention, beams, warnings);
+        private readonly beams: IfcEntity[], private readonly warnings: string[], includeContours = true) {
+        this.sections = new Sections(model, convention, beams, warnings, includeContours);
     }
 
     public build(beam: IfcEntity, panelId: string): Element {

@@ -35,6 +35,9 @@ Read IFC statements
 The current implementation supports Bentley iModel OpenTower IFC2X3 exports
 for `MS TOWER` and `OpenTower` convention / `SelfSupported` towers. These mappings are not universal rules
 for every IFC file or exporter.
+Common X extraction additionally recognizes OpenTower monopoles with explicit
+Pole components; see [README.md](./README.md) for their representation and limits.
+Direct OTXML conversion still follows the SST panel hierarchy.
 
 ## 2. Understanding an IFC statement
 
@@ -452,9 +455,9 @@ references rather than depend on line order.
 The IFC is the only conversion input:
 
 ```powershell
-npm run convert -- "C:\data\tower.ifc" "C:\data\recovered.otxml"
+npm run convert:otxml -- "C:\data\tower.ifc" "C:\data\recovered.otxml"
 # Explicitly allow a known incomplete export:
-npm run convert -- "C:\data\partial.ifc" "C:\data\partial.otxml" --allow-partial
+npm run convert:otxml -- "C:\data\partial.ifc" "C:\data\partial.otxml" --allow-partial
 npm test
 ```
 
